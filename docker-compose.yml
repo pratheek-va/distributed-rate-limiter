@@ -1,0 +1,54 @@
+# Spins up Redis, two identical API instances, and an nginx load balancer.
+# The two instances share one Redis, proving the limit is enforced globally
+# (not per-process) even when requests are spread across servers.
+#
+#   docker compose up --build
+#   curl http://localhost:8080/api/ping      # round-robins across api1 / api2
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+  api1:
+    build:
+      context: .
+      dockerfile: demo/DemoApi/Dockerfile
+    environment:
+      REDIS_CONNECTION: "redis:6379"
+      INSTANCE_ID: "api1"
+      RateLimit__Algorithm: "TokenBucket"
+      RateLimit__PermitLimit: "10"
+      RateLimit__WindowSeconds: "1"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  api2:
+    build:
+      context: .
+      dockerfile: demo/DemoApi/Dockerfile
+    environment:
+      REDIS_CONNECTION: "redis:6379"
+      INSTANCE_ID: "api2"
+      RateLimit__Algorithm: "TokenBucket"
+      RateLimit__PermitLimit: "10"
+      RateLimit__WindowSeconds: "1"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  loadbalancer:
+    image: nginx:alpine
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api1
+      - api2
